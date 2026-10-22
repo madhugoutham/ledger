@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Ledger</title>
+<meta name="description" content="Who shipped what, per repo, per org. A static GitHub contribution ledger and leaderboard for llm-d, vllm-project and opendatahub-io.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script>
+  // Apply the saved theme before first paint to avoid a flash.
+  try {
+    var t = localStorage.getItem("ledger.theme");
+    if (t === "dark" || t === "light") document.documentElement.setAttribute("data-theme", t);
+  } catch (e) {}
+</script>
+</head>
+<body>
+
+<header class="top">
+  <a class="brand" href="./" aria-label="Ledger home">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <span class="brand-name">Ledger</span>
+  </a>
+  <nav class="orgs" id="orgs" aria-label="Organizations"></nav>
+  <div class="top-controls">
+    <label class="window">
+      <span class="sr-only">Time window</span>
+      <select id="window" aria-label="Time window">
+        <option value="30">Last 30 days</option>
+        <option value="90" selected>Last 90 days</option>
+        <option value="180">Last 180 days</option>
+        <option value="365">Last 365 days</option>
+      </select>
+    </label>
+    <button class="ghost" id="theme" type="button" aria-label="Switch theme">Theme</button>
+    <button class="ghost" id="rate" type="button" title="GitHub API quota" aria-live="polite">API</button>
+    <button class="ghost" id="account" type="button">Connect</button>
+  </div>
+</header>
+
+<main class="main" id="main">
+
+  <section class="ask" aria-labelledby="ask-title">
+    <h1 id="ask-title" class="ask-title">Who shipped what?</h1>
+    <form class="ask-form" id="ask-form" autocomplete="off">
+      <input id="login" class="ask-input" type="text" inputmode="text" spellcheck="false"
+             placeholder="GitHub username" aria-label="GitHub username" list="recent-logins">
+      <datalist id="recent-logins"></datalist>
+      <button class="primary" type="submit">Show contributions</button>
+    </form>
+    <p class="ask-hint" id="ask-hint">Merged pull requests, reviews and issues in every repository of the selected organizations, consolidated per org.</p>
+  </section>
+
+  <div class="tabs" role="tablist" aria-label="Views">
+    <button class="tab" role="tab" id="tab-person" aria-controls="view-person" aria-selected="true" type="button">Person</button>
+    <button class="tab" role="tab" id="tab-board" aria-controls="view-board" aria-selected="false" type="button">Leaderboard</button>
+  </div>
+
+  <section class="view" id="view-person" role="tabpanel" aria-labelledby="tab-person"></section>
+  <section class="view" id="view-board" role="tabpanel" aria-labelledby="tab-board" hidden></section>
+
+</main>
+
+<footer class="foot">
+  <details class="method" id="method">
+    <summary>How this is counted</summary>
+    <div class="method-body">
+      <p>Everything comes straight from the GitHub API, from your browser, with your own token. Nothing is stored anywhere else.</p>
+      <ul>
+        <li><strong>Merged PRs</strong> are pull requests you authored that were merged inside the window (<code>is:pr is:merged author:you org:… merged:from..to</code>). Forks and bots are excluded.</li>
+        <li><strong>Reviews</strong> and <strong>issues</strong> come from GitHub's own contribution counts for the org and window (<code>contributionsCollection</code>), so they match your profile graph.</li>
+        <li><strong>Commits</strong> are shown for context but not scored: in squash-merge orgs one PR is one commit, so scoring both would count the same work twice.</li>
+        <li><strong>Score</strong> = <span id="method-weights"></span>. Three dimensions, never a single count. The weights are a convention, not a judgement.</li>
+        <li>The leaderboard is a short window, not all time, and lists everyone who merged a PR, not only org members.</li>
+      </ul>
+      <p>This board is for seeing work, not grading people. Please do not use it for performance reviews, pay or promotion; review and triage work is undercounted by every metric here.</p>
+    </div>
+  </details>
+  <p class="foot-note">A static page, like <a href="https://github.com/mgoin/pingboard">pingboard</a>. Open <code>index.html</code> or host it anywhere.</p>
+</footer>
+
+<dialog class="dialog" id="token-dialog" aria-labelledby="token-title">
+  <form method="dialog" class="dialog-form" id="token-form">
+    <h2 id="token-title">Connect to GitHub</h2>
+    <p>Create a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained token</a> with <strong>no</strong> repository access and <strong>no</strong> permissions. Public data is readable by default, and a token with nothing attached cannot do anything else if it leaks.</p>
+    <p class="muted">A classic token with no scopes also works. The token stays in this browser and is sent only to <code>api.github.com</code>.</p>
+    <label class="field">
+      <span>Token</span>
+      <input id="token-input" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…">
+    </label>
+    <label class="check">
+      <input id="token-remember" type="checkbox">
+      <span>Keep token after closing this tab</span>
+    </label>
+    <p class="error" id="token-error" role="alert" hidden></p>
+    <div class="dialog-actions">
+      <button class="ghost" type="button" id="token-cancel">Cancel</button>
+      <button class="primary" type="submit" id="token-submit">Connect</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="demo-data.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
