@@ -74,13 +74,14 @@
   function avatar(login) { return "data:image/svg+xml," + encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'><rect width='48' height='48' fill='hsl(${(login.length * 47) % 360},40%,55%)'/><text x='24' y='31' font-family='sans-serif' font-size='20' fill='white' text-anchor='middle'>${login[0].toUpperCase()}</text></svg>`); }
 
   function contributions(login, orgId, from, to) {
-    const org = Object.keys(orgs).find((o) => orgs[o].id === orgId);
+    const org = orgId ? Object.keys(orgs).find((o) => orgs[o].id === orgId) : null;
+    const inOrg = (x) => !org || x.org === org;
     const byRepo = (list) => { const m = new Map(); for (const x of list) m.set(x.repo, (m.get(x.repo) || 0) + 1); return [...m].map(([repo, n]) => ({ repository: { nameWithOwner: repo, isFork: false }, contributions: { totalCount: n } })); };
-    const mine = prs.filter((x) => x.org === org && x.author === login && x.state === "MERGED" && inRange(x.mergedAt, [Date.parse(from), Date.parse(to)]));
-    const myIssues = issues.filter((x) => x.org === org && x.author === login && inRange(x.createdAt, [Date.parse(from), Date.parse(to)]));
+    const mine = prs.filter((x) => inOrg(x) && x.author === login && x.state === "MERGED" && inRange(x.mergedAt, [Date.parse(from), Date.parse(to)]));
+    const myIssues = issues.filter((x) => inOrg(x) && x.author === login && inRange(x.createdAt, [Date.parse(from), Date.parse(to)]));
     // Reviews: invented as a function of merged work, skewed toward a few maintainers.
     const reviewFactor = ["tlindqvist", "rj-ferreira", "mira-okoye"].includes(login) ? 2.4 : 0.7;
-    const reviews = prs.filter((x) => x.org === org && x.author !== login && x.state === "MERGED" && inRange(x.mergedAt, [Date.parse(from), Date.parse(to)]))
+    const reviews = prs.filter((x) => inOrg(x) && x.author !== login && x.state === "MERGED" && inRange(x.mergedAt, [Date.parse(from), Date.parse(to)]))
       .filter(() => rnd() < 0.06 * reviewFactor);
     return {
       totalCommitContributions: mine.length, totalPullRequestContributions: mine.length,
@@ -110,12 +111,12 @@
       if (/user\(login: \$login\)/.test(query)) {
         const user = { login: v.login, name: v.login.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()), avatarUrl: avatar(v.login), url: `https://github.com/${v.login}` };
         if (!people.includes(v.login)) return { user: null };
-        for (const m of query.matchAll(/c(\d+): contributionsCollection\(organizationID: \$org(\d+)/g)) user[`c${m[1]}`] = contributions(v.login, v[`org${m[2]}`], v.from, v.to);
+        user.c = contributions(v.login, null, v.from, v.to);
         return { user };
       }
       if (/u0: user\(login:/.test(query)) {
         const out = {};
-        for (const m of query.matchAll(/u(\d+): user\(login: "([^"]+)"\)/g)) out[`u${m[1]}`] = { login: m[2], avatarUrl: avatar(m[2]), c: contributions(m[2], v.org, v.from, v.to) };
+        for (const m of query.matchAll(/u(\d+): user\(login: "([^"]+)"\)/g)) out[`u${m[1]}`] = { login: m[2], avatarUrl: avatar(m[2]), c: contributions(m[2], null, v.from, v.to) };
         return out;
       }
       return {};

@@ -39,8 +39,7 @@ const state = {
   boardOrg: null,
   boardSort: { key: "score", dir: "desc" },
   boardFilter: "",
-  loading: { person: false, board: false },
-  orgIds: store.get("ledger.orgIds", {})
+  loading: { person: false, board: false }
 };
 state.active = new Set(state.orgs);
 
@@ -146,47 +145,34 @@ query($q: String!, $first: Int!, $after: String) {
   }
 }`;
 
-function orgIdsQuery(orgs) {
-  return `query { ${orgs.map((o, i) => `o${i}: organization(login: ${JSON.stringify(o)}) { id login name avatarUrl }`).join("\n")} }`;
-}
-
 const CONTRIB_FIELDS = `
-  totalCommitContributions
-  totalPullRequestContributions
-  totalPullRequestReviewContributions
-  totalIssueContributions
   commitContributionsByRepository(maxRepositories: 100) { repository { nameWithOwner isFork } contributions { totalCount } }
   pullRequestContributionsByRepository(maxRepositories: 100) { repository { nameWithOwner isFork } contributions { totalCount } }
   pullRequestReviewContributionsByRepository(maxRepositories: 100) { repository { nameWithOwner isFork } contributions { totalCount } }
   issueContributionsByRepository(maxRepositories: 100) { repository { nameWithOwner isFork } contributions { totalCount } }`;
 
-function userQuery(orgs) {
-  const vars = orgs.map((_, i) => `$org${i}: ID!`).join(", ");
-  const blocks = orgs.map((_, i) => `c${i}: contributionsCollection(organizationID: $org${i}, from: $from, to: $to) { ${CONTRIB_FIELDS} }`).join("\n");
-  return `query($login: String!, $from: DateTime!, $to: DateTime!, ${vars}) {
-    user(login: $login) { login name avatarUrl url ${blocks} }
+function userQuery() {
+  return `query($login: String!, $from: DateTime!, $to: DateTime!) {
+    user(login: $login) { login name avatarUrl url c: contributionsCollection(from: $from, to: $to) { ${CONTRIB_FIELDS} } }
   }`;
+}
+
+// Sum a by-repository list for one org (repository owner, case-insensitive).
+function sumForOrg(list, org) {
+  const o = org.toLowerCase();
+  return list.filter((x) => x.repository.nameWithOwner.split("/")[0].toLowerCase() === o);
 }
 
 function enrichQuery(logins) {
   const blocks = logins.map((l, i) => `u${i}: user(login: ${JSON.stringify(l)}) {
     login avatarUrl
-    c: contributionsCollection(organizationID: $org, from: $from, to: $to) {
-      totalCommitContributions totalPullRequestReviewContributions totalIssueContributions
-      totalRepositoriesWithContributedCommits
+    c: contributionsCollection(from: $from, to: $to) {
+      pullRequestReviewContributionsByRepository(maxRepositories: 100) { repository { nameWithOwner } contributions { totalCount } }
+      issueContributionsByRepository(maxRepositories: 100) { repository { nameWithOwner } contributions { totalCount } }
+      commitContributionsByRepository(maxRepositories: 100) { repository { nameWithOwner } contributions { totalCount } }
     }
   }`).join("\n");
-  return `query($org: ID!, $from: DateTime!, $to: DateTime!) { ${blocks} }`;
-}
-
-async function ensureOrgIds(orgs) {
-  const missing = orgs.filter((o) => !state.orgIds[o]);
-  if (!missing.length) return;
-  const data = await gql(orgIdsQuery(missing));
-  missing.forEach((o, i) => { const node = data[`o${i}`]; if (node) state.orgIds[o] = { id: node.id, name: node.name || o, avatarUrl: node.avatarUrl }; });
-  store.set("ledger.orgIds", state.orgIds);
-  const unknown = missing.filter((o) => !state.orgIds[o]);
-  if (unknown.length) throw new Error(`Organization not found: ${unknown.join(", ")}`);
+  return `query($from: DateTime!, $to: DateTime!) { ${blocks} }`;
 }
 
 // Paginate a search until done or until the 1,000-result cap.
@@ -212,17 +198,20 @@ async function loadPerson(login, { refresh = false } = {}) {
   const key = cacheKey(["person", login, orgs.join(","), state.days]);
   if (!refresh) { const hit = cacheGet(key); if (hit) return hit; }
 
-  await ensureOrgIds(orgs);
   const w = windowBounds(state.days);
-  const vars = { login, from: w.from, to: w.to };
-  orgs.forEach((o, i) => { vars[`org${i}`] = state.orgIds[o].id; });
-  const data = await gql(userQuery(orgs), vars);
+  const data = await gql(userQuery(), { login, from: w.from, to: w.to });
   if (!data.user) throw new Error(`No GitHub user named "${login}".`);
+  const all = data.user.c;
 
   const perOrg = {};
   const jobs = [];
-  orgs.forEach((org, i) => {
-    const c = data.user[`c${i}`];
+  orgs.forEach((org) => {
+    const c = {
+      commitContributionsByRepository: sumForOrg(all.commitContributionsByRepository, org),
+      pullRequestReviewContributionsByRepository: sumForOrg(all.pullRequestReviewContributionsByRepository, org),
+      issueContributionsByRepository: sumForOrg(all.issueContributionsByRepository, org)
+    };
+    const total = (list) => list.reduce((n, x) => n + x.contributions.totalCount, 0);
     const rows = new Map();
     const row = (name, isFork) => {
       let r = rows.get(name);
@@ -233,7 +222,7 @@ async function loadPerson(login, { refresh = false } = {}) {
     for (const x of c.pullRequestReviewContributionsByRepository) row(x.repository.nameWithOwner, x.repository.isFork).reviews = x.contributions.totalCount;
     for (const x of c.issueContributionsByRepository) row(x.repository.nameWithOwner, x.repository.isFork).issues = x.contributions.totalCount;
     perOrg[org] = {
-      totals: { merged: 0, open: 0, closed: 0, reviews: c.totalPullRequestReviewContributions, issues: c.totalIssueContributions, commits: c.totalCommitContributions, additions: 0, deletions: 0 },
+      totals: { merged: 0, open: 0, closed: 0, reviews: total(c.pullRequestReviewContributionsByRepository), issues: total(c.issueContributionsByRepository), commits: total(c.commitContributionsByRepository), additions: 0, deletions: 0 },
       rows, mergedAt: [], truncated: false
     };
     const base = `is:pr author:${login} org:${org}`;
@@ -304,7 +293,6 @@ async function planSlices(org, fromDay, toDay, onProgress) {
 async function loadBoard(org, { refresh = false, onProgress } = {}) {
   const key = cacheKey(["board", org, state.days]);
   if (!refresh) { const hit = cacheGet(key); if (hit) return hit; }
-  await ensureOrgIds([org]);
   const w = windowBounds(state.days);
   const slices = await planSlices(org, w.fromDay, w.toDay, onProgress);
   const total = slices.reduce((s, x) => s + x.count, 0);
@@ -335,19 +323,19 @@ async function loadBoard(org, { refresh = false, onProgress } = {}) {
 async function enrichBoard(board, start, count, onProgress) {
   const targets = board.rows.slice(start, start + count).filter((r) => !r.enriched);
   if (!targets.length) return;
-  const orgId = state.orgIds[board.org].id;
   const batches = [];
   for (let i = 0; i < targets.length; i += ENRICH_BATCH) batches.push(targets.slice(i, i + ENRICH_BATCH));
   let done = 0;
   await pool(batches.map((batch) => async () => {
-    const data = await gql(enrichQuery(batch.map((r) => r.login)), { org: orgId, from: board.window.from, to: board.window.to });
+    const data = await gql(enrichQuery(batch.map((r) => r.login)), { from: board.window.from, to: board.window.to });
+    const total = (list) => sumForOrg(list, board.org).reduce((n, x) => n + x.contributions.totalCount, 0);
     batch.forEach((r, i) => {
       const u = data[`u${i}`];
       if (!u) { r.enriched = true; return; }
       r.avatarUrl = r.avatarUrl || u.avatarUrl;
-      r.reviews = u.c.totalPullRequestReviewContributions;
-      r.issues = u.c.totalIssueContributions;
-      r.commits = u.c.totalCommitContributions;
+      r.reviews = total(u.c.pullRequestReviewContributionsByRepository);
+      r.issues = total(u.c.issueContributionsByRepository);
+      r.commits = total(u.c.commitContributionsByRepository);
       r.enriched = true;
     });
     done += batch.length;
