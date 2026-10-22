@@ -4,6 +4,7 @@
 (function () {
   const orgs = {
     "llm-d": { id: "O_demo_llmd", repos: ["llm-d/llm-d-inference-scheduler", "llm-d/llm-d", "llm-d/llm-d-kv-cache-manager", "llm-d/llm-d-deployer", "llm-d/llm-d-benchmark", "llm-d/llm-d-routing-sidecar"] },
+    "llm-d-incubation": { id: "O_demo_inc", repos: ["llm-d-incubation/llm-d-async", "llm-d-incubation/llm-d-latency-predictor"] },
     "vllm-project": { id: "O_demo_vllm", repos: ["vllm-project/vllm", "vllm-project/production-stack", "vllm-project/vllm-ascend", "vllm-project/llm-compressor", "vllm-project/guidellm"] },
     "opendatahub-io": { id: "O_demo_odh", repos: ["opendatahub-io/opendatahub-operator", "opendatahub-io/odh-dashboard", "opendatahub-io/kubeflow", "opendatahub-io/model-registry"] }
   };
@@ -21,7 +22,7 @@
   const prs = []; // {org, repo, author, mergedAt, state, additions, deletions, number, title}
   let num = 4000;
   for (const [org, o] of Object.entries(orgs)) {
-    const n = org === "vllm-project" ? 520 : org === "llm-d" ? 160 : 90;
+    const n = org === "vllm-project" ? 520 : org === "llm-d" ? 160 : org === "llm-d-incubation" ? 40 : 90;
     for (let i = 0; i < n; i++) {
       // Skewed: a few people do most of the work.
       const idx = Math.floor(Math.pow(rnd(), 2.2) * people.length);

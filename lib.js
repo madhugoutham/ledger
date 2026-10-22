@@ -1,6 +1,6 @@
 // Pure helpers shared by the page and the tests. No DOM, no fetch.
 
-export const DEFAULT_ORGS = ["llm-d", "vllm-project", "opendatahub-io"];
+export const DEFAULT_ORGS = ["llm-d", "llm-d-incubation", "vllm-project", "opendatahub-io"];
 
 // Published scoring weights. Composite across three dimensions (SPACE: never a
 // single count), merged work only, bots excluded. Commits are shown but not
@@ -142,4 +142,18 @@ export function relativeTime(iso, now = Date.now()) {
   const d = Math.round(h / 24);
   if (d < 60) return d + "d ago";
   return Math.round(d / 30) + "mo ago";
+}
+
+// contributionsCollection accepts at most one year per call: split [from, to]
+// into chunks of at most 365 days, oldest first.
+export function yearChunks(fromIso, toIso) {
+  const out = [];
+  let a = Date.parse(fromIso);
+  const b = Date.parse(toIso);
+  while (a <= b) {
+    const end = Math.min(b, a + 365 * 86400000 - 1);
+    out.push({ from: new Date(a).toISOString(), to: new Date(end).toISOString() });
+    a = end + 1;
+  }
+  return out;
 }

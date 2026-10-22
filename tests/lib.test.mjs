@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isBot, normalizeLogin, normalizeOrg, windowBounds, splitWindow, groupByAuthor, score, weeklyBuckets, sparklinePath, sortRows, fmt } from "../lib.js";
+import { isBot, normalizeLogin, normalizeOrg, windowBounds, splitWindow, groupByAuthor, score, weeklyBuckets, sparklinePath, sortRows, fmt, yearChunks } from "../lib.js";
 
 test("bots are excluded by typename, suffix and known logins", () => {
   assert.equal(isBot({ login: "dependabot[bot]" }), true);
@@ -73,4 +73,13 @@ test("fmt abbreviates large numbers", () => {
   assert.equal(fmt(999), "999");
   assert.equal(fmt(12345), "12.3k");
   assert.equal(fmt(null), "—");
+});
+
+test("yearChunks splits long windows into <=365-day pieces", () => {
+  const one = yearChunks("2026-07-25T00:00:00.000Z", "2026-10-22T23:59:59.000Z");
+  assert.equal(one.length, 1);
+  const two = yearChunks("2024-10-23T00:00:00.000Z", "2026-10-22T23:59:59.000Z");
+  assert.equal(two.length, 2);
+  assert.equal(two[0].from, "2024-10-23T00:00:00.000Z");
+  assert.equal(two[1].to, "2026-10-22T23:59:59.000Z");
 });

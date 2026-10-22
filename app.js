@@ -1,7 +1,7 @@
 // Ledger — a static page that reads GitHub from your browser with your token.
 import {
   DEFAULT_ORGS, WEIGHTS, isBot, normalizeLogin, normalizeOrg, windowBounds,
-  splitWindow, groupByAuthor, score, weeklyBuckets, sparklinePath, fmt, sortRows, relativeTime
+  splitWindow, groupByAuthor, score, weeklyBuckets, sparklinePath, fmt, sortRows, relativeTime, yearChunks
 } from "./lib.js";
 
 const API_ROOT = "https://api.github.com";
@@ -157,6 +157,18 @@ function userQuery() {
   }`;
 }
 
+// Add the by-repository lists of a second collection into the first.
+function mergeCollections(into, extra) {
+  for (const key of Object.keys(into)) {
+    if (!Array.isArray(into[key]) || !Array.isArray(extra?.[key])) continue;
+    const idx = new Map(into[key].map((x) => [x.repository.nameWithOwner, x]));
+    for (const x of extra[key]) {
+      const hit = idx.get(x.repository.nameWithOwner);
+      if (hit) hit.contributions.totalCount += x.contributions.totalCount; else into[key].push(x);
+    }
+  }
+}
+
 // Sum a by-repository list for one org (repository owner, case-insensitive).
 function sumForOrg(list, org) {
   const o = org.toLowerCase();
@@ -199,9 +211,14 @@ async function loadPerson(login, { refresh = false } = {}) {
   if (!refresh) { const hit = cacheGet(key); if (hit) return hit; }
 
   const w = windowBounds(state.days);
-  const data = await gql(userQuery(), { login, from: w.from, to: w.to });
+  const chunks = yearChunks(w.from, w.to);
+  const data = await gql(userQuery(), { login, from: chunks[0].from, to: chunks[0].to });
   if (!data.user) throw new Error(`No GitHub user named "${login}".`);
   const all = data.user.c;
+  for (const ch of chunks.slice(1)) {
+    const more = await gql(userQuery(), { login, from: ch.from, to: ch.to });
+    mergeCollections(all, more.user.c);
+  }
 
   const perOrg = {};
   const jobs = [];
@@ -327,7 +344,12 @@ async function enrichBoard(board, start, count, onProgress) {
   for (let i = 0; i < targets.length; i += ENRICH_BATCH) batches.push(targets.slice(i, i + ENRICH_BATCH));
   let done = 0;
   await pool(batches.map((batch) => async () => {
-    const data = await gql(enrichQuery(batch.map((r) => r.login)), { from: board.window.from, to: board.window.to });
+    const chunks = yearChunks(board.window.from, board.window.to);
+    const data = await gql(enrichQuery(batch.map((r) => r.login)), { from: chunks[0].from, to: chunks[0].to });
+    for (const ch of chunks.slice(1)) {
+      const more = await gql(enrichQuery(batch.map((r) => r.login)), { from: ch.from, to: ch.to });
+      batch.forEach((_, i) => { if (data[`u${i}`] && more[`u${i}`]) mergeCollections(data[`u${i}`].c, more[`u${i}`].c); });
+    }
     const total = (list) => sumForOrg(list, board.org).reduce((n, x) => n + x.contributions.totalCount, 0);
     batch.forEach((r, i) => {
       const u = data[`u${i}`];
