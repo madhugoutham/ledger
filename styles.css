@@ -281,3 +281,8 @@ td .spark { display: block; }
 @media (forced-colors: active) {
   .bar::before { opacity: 0.5; forced-color-adjust: none; background: Highlight; }
 }
+
+.log-wrap { margin-top: 10px; }
+.log-wrap summary { cursor: pointer; }
+.log { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 4px; font-size: 12px; }
+.log code { white-space: normal; word-break: break-word; }

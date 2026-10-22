@@ -79,7 +79,10 @@ async function gql(query, variables = {}) {
   if (!response.ok || !json?.data) {
     throw new Error(json?.errors?.[0]?.message || json?.message || `${response.status} ${response.statusText}`);
   }
-  if (json.errors?.length) console.warn("GraphQL partial errors", json.errors);
+  if (json.errors?.length) {
+    console.warn("GraphQL partial errors", json.errors);
+    Object.defineProperty(json.data, "__errors", { value: json.errors, enumerable: false });
+  }
   return json.data;
 }
 
@@ -188,19 +191,75 @@ function enrichQuery(logins) {
 }
 
 // Paginate a search until done or until the 1,000-result cap.
+// Request log, shown under "How this is counted" so problems can be reported.
+const log = [];
+function note(kind, q, detail) {
+  log.unshift({ t: new Date().toISOString().slice(11, 19), kind, q, detail });
+  if (log.length > 40) log.pop();
+  renderLog();
+}
+
 async function searchAll(query, q, { first = 100, onPage } = {}) {
+  try {
+    return await searchGraphQL(query, q, { first, onPage });
+  } catch (e) {
+    note("graphql search failed", q, e.message);
+    if (DEMO) throw e;
+    return await searchRest(q, query === SEARCH_ISSUES, { onPage });
+  }
+}
+
+async function searchGraphQL(query, q, { first, onPage }) {
   const nodes = [];
   let after = null, issueCount = 0;
   for (let page = 0; page < 10; page++) {
     const data = await gql(query, { q, first, after });
     const s = data.search;
+    if (!s) throw new Error(data.__errors?.[0]?.message || "search returned no data");
     issueCount = s.issueCount;
     nodes.push(...s.nodes.filter(Boolean));
     onPage?.(nodes.length, issueCount);
     if (!s.pageInfo.hasNextPage) break;
     after = s.pageInfo.endCursor;
   }
+  note("search", q, `${issueCount} matches, ${nodes.length} read`);
   return { nodes, issueCount, truncated: issueCount > nodes.length };
+}
+
+// REST search: same query language, no additions/deletions, works with any token.
+async function searchRest(q, issuesOnly, { onPage } = {}) {
+  const nodes = [];
+  let total = 0;
+  for (let page = 1; page <= 10; page++) {
+    const res = await rest(`/search/issues?q=${encodeURIComponent(q)}&per_page=100&page=${page}&advanced_search=true`);
+    total = res.total_count;
+    for (const it of res.items) {
+      const repo = it.repository_url.replace("https://api.github.com/repos/", "");
+      const isPR = Boolean(it.pull_request);
+      if (issuesOnly === isPR) continue;
+      const merged = Boolean(it.pull_request?.merged_at);
+      nodes.push({
+        number: it.number, title: it.title, url: it.html_url,
+        state: merged ? "MERGED" : it.state.toUpperCase(), isDraft: Boolean(it.draft),
+        createdAt: it.created_at, closedAt: it.closed_at, mergedAt: it.pull_request?.merged_at || null,
+        additions: 0, deletions: 0,
+        author: { login: it.user?.login, __typename: it.user?.type === "Bot" ? "Bot" : "User", avatarUrl: it.user?.avatar_url },
+        repository: { nameWithOwner: repo, isFork: false }
+      });
+    }
+    onPage?.(nodes.length, total);
+    if (res.items.length < 100 || nodes.length >= total) break;
+  }
+  note("search (REST fallback)", q, `${total} matches, ${nodes.length} read`);
+  return { nodes, issueCount: total, truncated: total > nodes.length };
+}
+
+function renderLog() {
+  const el = $("#log");
+  if (!el) return;
+  el.innerHTML = log.length
+    ? log.map((l) => `<li><span class="muted">${l.t}</span> <b>${esc(l.kind)}</b> <code>${esc(l.q)}</code> → ${esc(l.detail)}</li>`).join("")
+    : `<li class="muted">No requests yet.</li>`;
 }
 
 // ---------- person ----------
@@ -213,8 +272,9 @@ async function loadPerson(login, { refresh = false } = {}) {
   const w = windowBounds(state.days);
   const chunks = yearChunks(w.from, w.to);
   const data = await gql(userQuery(), { login, from: chunks[0].from, to: chunks[0].to });
-  if (!data.user) throw new Error(`No GitHub user named "${login}".`);
+  if (!data.user) throw new Error(data.__errors?.[0]?.message || `No GitHub user named "${login}".`);
   const all = data.user.c;
+  note("contributions", login, `${all.commitContributionsByRepository.length} repos with commits, ${all.pullRequestReviewContributionsByRepository.length} with reviews`);
   for (const ch of chunks.slice(1)) {
     const more = await gql(userQuery(), { login, from: ch.from, to: ch.to });
     mergeCollections(all, more.user.c);
